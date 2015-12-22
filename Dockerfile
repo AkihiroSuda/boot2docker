@@ -32,6 +32,11 @@ ENV AUFS_BRANCH     aufs4.1
 ENV AUFS_COMMIT     f3ef56eda94aa6bdc19272f93fc9c9de2b0da771
 # we use AUFS_COMMIT to get stronger repeatability guarantees
 
+# Apply the patch for lockdep: http://comments.gmane.org/gmane.linux.file-systems.aufs.user/5332
+ADD fix-lockdep.patch /
+RUN cd /linux-kernel && \
+    patch -p1 < /fix-lockdep.patch
+
 # Download AUFS and apply patches and files, then remove it
 RUN git clone -b "$AUFS_BRANCH" "$AUFS_REPO" /aufs-standalone && \
     cd /aufs-standalone && \
@@ -211,20 +216,22 @@ RUN cd $ROOTFS && cd usr/local/lib && ln -s libdnet.1 libdumbnet.so.1 &&\
     cd $ROOTFS && ln -s lib lib64
 
 # Download and build Parallels Tools
-ENV PRL_MAJOR 11
-ENV PRL_VERSION 11.1.0
-ENV PRL_BUILD 32202
+## Disabled due to an error:
+##   FATAL: modpost: GPL-incompatible module prl_tg.ko uses GPL-only symbol 'lockdep_init_map'
+# ENV PRL_MAJOR 11
+# ENV PRL_VERSION 11.1.0
+# ENV PRL_BUILD 32202
 
-RUN mkdir -p /prl_tools && \
-    curl -fL http://download.parallels.com/desktop/v${PRL_MAJOR}/${PRL_VERSION}/ParallelsTools-${PRL_VERSION}-${PRL_BUILD}-boot2docker.tar.gz \
-        | tar -xzC /prl_tools --strip-components 1 &&\
-    cd /prl_tools &&\
-    cp -Rv tools/* $ROOTFS &&\
-    \
-    KERNEL_DIR=/linux-kernel/ KVER=$KERNEL_VERSION SRC=/linux-kernel/ PRL_FREEZE_SKIP=1 \
-    make -C kmods/ -f Makefile.kmods installme &&\
-    \
-    find kmods/ -name \*.ko -exec cp {} $ROOTFS/lib/modules/$KERNEL_VERSION-boot2docker/ \;
+# RUN mkdir -p /prl_tools && \
+#     curl -fL http://download.parallels.com/desktop/v${PRL_MAJOR}/${PRL_VERSION}/ParallelsTools-${PRL_VERSION}-${PRL_BUILD}-boot2docker.tar.gz \
+#         | tar -xzC /prl_tools --strip-components 1 &&\
+#     cd /prl_tools &&\
+#     cp -Rv tools/* $ROOTFS &&\
+#     \
+#     KERNEL_DIR=/linux-kernel/ KVER=$KERNEL_VERSION SRC=/linux-kernel/ PRL_FREEZE_SKIP=1 \
+#     make -C kmods/ -f Makefile.kmods installme &&\
+#     \
+#     find kmods/ -name \*.ko -exec cp {} $ROOTFS/lib/modules/$KERNEL_VERSION-boot2docker/ \;
 
 # Build XenServer Tools
 ENV XEN_REPO https://github.com/xenserver/xe-guest-utilities
