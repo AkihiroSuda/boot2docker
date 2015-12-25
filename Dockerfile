@@ -26,11 +26,6 @@ ENV KERNEL_VERSION  4.1.13
 RUN curl --retry 10 https://www.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x/linux-$KERNEL_VERSION.tar.xz | tar -C / -xJ && \
     mv /linux-$KERNEL_VERSION /linux-kernel
 
-# Reverse the patch! (http://git.kernel.org/cgit/linux/kernel/git/stable/linux-stable.git/commit/?h=v4.1.13&id=6c0da28df5dac10672efe955eb89051a850008eb)
-ADD reverse-me.patch /
-RUN cd /linux-kernel && \
-    git apply -R /reverse-me.patch
-
 # http://aufs.sourceforge.net/
 ENV AUFS_REPO       https://github.com/sfjro/aufs4-standalone
 ENV AUFS_BRANCH     aufs4.1
@@ -322,6 +317,15 @@ RUN echo 'UTC' > $ROOTFS/etc/timezone \
 COPY rootfs/isolinux /tmp/iso/boot/isolinux
 
 COPY rootfs/make_iso.sh /
+
+# Apply patch (utilize build cache here)
+ADD tmp20151225.patch /
+RUN cd /linux-kernel && \
+    git apply /tmp20151225.patch && \
+    jobs=$(nproc); \
+    cd /linux-kernel && \
+    make -j ${jobs} bzImage && \
+    cp -v /linux-kernel/arch/x86_64/boot/bzImage /tmp/iso/boot/vmlinuz64
 
 RUN /make_iso.sh
 

@@ -1,0 +1,112 @@
+commit 9dcd139fd83e87b2b4df41f7c2f1369962efd75b
+Author: J. R. Okajima <hooanon05g@gmail.com>
+Date:   Thu Dec 24 15:18:24 2015 +0900
+
+    tmp aufs: for 4.3, 296291cdd1629c308114504b850dc343eabc2782 write xino in different task
+    
+    Signed-off-by: J. R. Okajima <hooanon05g@gmail.com>
+
+diff --git a/fs/aufs/xino.c b/fs/aufs/xino.c
+index 90de8c5..4a93b00 100644
+--- a/fs/aufs/xino.c
++++ b/fs/aufs/xino.c
+@@ -40,6 +40,9 @@ ssize_t xino_fread(vfs_readf_t func, struct file *file, void *kbuf, size_t size,
+ 
+ /* ---------------------------------------------------------------------- */
+ 
++static ssize_t xino_fwrite_wkq(vfs_writef_t func, struct file *file, void *buf,
++			       size_t size, loff_t *pos);
++
+ static ssize_t do_xino_fwrite(vfs_writef_t func, struct file *file, void *kbuf,
+ 			      size_t size, loff_t *pos)
+ {
+@@ -49,13 +52,25 @@ static ssize_t do_xino_fwrite(vfs_writef_t func, struct file *file, void *kbuf,
+ 		void *k;
+ 		const char __user *u;
+ 	} buf;
++	int i;
+ 
++	i = 0;
+ 	buf.k = kbuf;
+ 	oldfs = get_fs();
+ 	set_fs(KERNEL_DS);
+ 	do {
+-		/* todo: signal_pending? */
+ 		err = func(file, buf.u, size, pos);
++		if (err == -EINTR
++		    && !au_wkq_test()
++		    && fatal_signal_pending(current)) {
++			set_fs(oldfs);
++			err = xino_fwrite_wkq(func, file, kbuf, size, pos);
++			BUG_ON(err == -EINTR);
++			oldfs = get_fs();
++			set_fs(KERNEL_DS);
++		}
++		if (i++ > 10)
++			break;
+ 	} while (err == -EAGAIN || err == -EINTR);
+ 	set_fs(oldfs);
+ 
+@@ -82,35 +97,42 @@ static void call_do_xino_fwrite(void *args)
+ 	*a->errp = do_xino_fwrite(a->func, a->file, a->buf, a->size, a->pos);
+ }
+ 
++static ssize_t xino_fwrite_wkq(vfs_writef_t func, struct file *file, void *buf,
++			       size_t size, loff_t *pos)
++{
++	ssize_t err;
++	int wkq_err;
++	struct do_xino_fwrite_args args = {
++		.errp	= &err,
++		.func	= func,
++		.file	= file,
++		.buf	= buf,
++		.size	= size,
++		.pos	= pos
++	};
++
++	/*
++	 * it breaks RLIMIT_FSIZE and normal user's limit,
++	 * users should care about quota and real 'filesystem full.'
++	 */
++	wkq_err = au_wkq_wait(call_do_xino_fwrite, &args);
++	if (unlikely(wkq_err))
++		err = wkq_err;
++
++	return err;
++}
++
+ ssize_t xino_fwrite(vfs_writef_t func, struct file *file, void *buf,
+ 		    size_t size, loff_t *pos)
+ {
+ 	ssize_t err;
+ 
+-	/* todo: signal block and no wkq? */
+ 	if (rlimit(RLIMIT_FSIZE) == RLIM_INFINITY) {
+ 		lockdep_off();
+ 		err = do_xino_fwrite(func, file, buf, size, pos);
+ 		lockdep_on();
+-	} else {
+-		/*
+-		 * it breaks RLIMIT_FSIZE and normal user's limit,
+-		 * users should care about quota and real 'filesystem full.'
+-		 */
+-		int wkq_err;
+-		struct do_xino_fwrite_args args = {
+-			.errp	= &err,
+-			.func	= func,
+-			.file	= file,
+-			.buf	= buf,
+-			.size	= size,
+-			.pos	= pos
+-		};
+-
+-		wkq_err = au_wkq_wait(call_do_xino_fwrite, &args);
+-		if (unlikely(wkq_err))
+-			err = wkq_err;
+-	}
++	} else
++		err = xino_fwrite_wkq(func, file, buf, size, pos);
+ 
+ 	return err;
+ }
